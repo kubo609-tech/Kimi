@@ -66,6 +66,21 @@ const PLAYER_Y = SCREEN_HEIGHT - 40;
 const BULLET_SPEED = 6;
 const ALIEN_BULLET_SPEED = 3;
 const PLAYER_SPEED = 4;
+const BARRIER_COUNT = 4;
+const BARRIER_PIXEL_SIZE = 3;
+const BARRIER_PATTERN = [
+  '00011111111111111000',
+  '00111111111111111100',
+  '01111111111111111110',
+  '11111111111111111111',
+  '11111111111111111111',
+  '11111111111111111111',
+  '11111111000011111111',
+  '11111110000001111111',
+  '11111100000000111111',
+  '11111000000000011111'
+];
+const INITIAL_ALIEN_COUNT = ALIEN_ROWS * ALIEN_COLS;
 
 let keys = {};
 let gameState = 'start'; // start, playing, gameover
@@ -92,6 +107,7 @@ let alienSpeed = 0.5;
 let alienMoveInterval = 30;
 let alienShootChance = 0.01;
 let mysteryShip = null;
+let barriers = [];
 
 function initAliens() {
   aliens = [];
@@ -126,7 +142,19 @@ function resetGame() {
   alienMoveInterval = 60;
   alienShootChance = 0.005;
   initAliens();
+  initBarriers();
   updateUI();
+}
+
+function initBarriers() {
+  barriers = [];
+  for (let i = 0; i < BARRIER_COUNT; i++) {
+    barriers.push({
+      x: 80 + i * 140,
+      y: PLAYER_Y - 40,
+      cells: BARRIER_PATTERN.map(row => row.split('').map(cell => cell === '1'))
+    });
+  }
 }
 
 function drawSprite(ctx, sprite, x, y, scale, color) {
@@ -147,7 +175,7 @@ function drawPlayer() {
 }
 
 function drawAliens() {
-  let anim = Math.floor(frameCount / alienMoveInterval) % 2;
+  let anim = Math.floor(frameCount / getAlienMoveInterval()) % 2;
   for (let alien of aliens) {
     if (!alien.alive) continue;
     let sprite = SPRITES[alien.type];
@@ -183,14 +211,27 @@ function drawParticles() {
 }
 
 function drawBarriers() {
-  // 簡易的な4つの防衛壁
   ctx.fillStyle = '#0f0';
-  for (let i = 0; i < 4; i++) {
-    let bx = 80 + i * 140;
-    let by = PLAYER_Y - 40;
-    ctx.fillRect(bx, by, 60, 15);
-    ctx.fillRect(bx + 10, by + 15, 40, 10);
+  for (let barrier of barriers) {
+    for (let row = 0; row < barrier.cells.length; row++) {
+      for (let col = 0; col < barrier.cells[row].length; col++) {
+        if (!barrier.cells[row][col]) continue;
+        ctx.fillRect(
+          barrier.x + col * BARRIER_PIXEL_SIZE,
+          barrier.y + row * BARRIER_PIXEL_SIZE,
+          BARRIER_PIXEL_SIZE,
+          BARRIER_PIXEL_SIZE
+        );
+      }
+    }
   }
+}
+
+function getAlienMoveInterval() {
+  const aliveAliens = aliens.filter(alien => alien.alive).length;
+  const aliveRatio = aliveAliens / INITIAL_ALIEN_COUNT;
+  const speedScale = 0.35 + aliveRatio * 0.65;
+  return Math.max(2, Math.floor(alienMoveInterval * speedScale));
 }
 
 function updatePlayer() {
@@ -203,7 +244,7 @@ function updatePlayer() {
 }
 
 function updateAliens() {
-  if (frameCount % Math.max(2, Math.floor(alienMoveInterval)) !== 0) return;
+  if (frameCount % getAlienMoveInterval() !== 0) return;
 
   let edge = false;
   for (let alien of aliens) {
@@ -282,10 +323,40 @@ function createExplosion(x, y, color) {
   }
 }
 
+function damageBarrierAt(x, y, isAlienBullet) {
+  for (let barrier of barriers) {
+    const width = barrier.cells[0].length * BARRIER_PIXEL_SIZE;
+    const height = barrier.cells.length * BARRIER_PIXEL_SIZE;
+    if (x < barrier.x || x >= barrier.x + width || y < barrier.y || y >= barrier.y + height) continue;
+
+    const cellX = Math.floor((x - barrier.x) / BARRIER_PIXEL_SIZE);
+    const cellY = Math.floor((y - barrier.y) / BARRIER_PIXEL_SIZE);
+    if (!barrier.cells[cellY][cellX]) return false;
+
+    const blast = isAlienBullet
+      ? [[0, 0], [1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1], [0, 2]]
+      : [[0, 0], [1, 0], [-1, 0], [0, -1], [1, -1], [-1, -1], [0, -2]];
+
+    for (let [dx, dy] of blast) {
+      const nx = cellX + dx;
+      const ny = cellY + dy;
+      if (ny < 0 || ny >= barrier.cells.length) continue;
+      if (nx < 0 || nx >= barrier.cells[ny].length) continue;
+      barrier.cells[ny][nx] = false;
+    }
+    return true;
+  }
+  return false;
+}
+
 function checkCollisions() {
   // プレイヤー弾 vs エイリアン
   for (let i = bullets.length - 1; i >= 0; i--) {
     let b = bullets[i];
+    if (damageBarrierAt(b.x, b.y, false)) {
+      bullets.splice(i, 1);
+      continue;
+    }
     let hit = false;
     for (let alien of aliens) {
       if (!alien.alive) continue;
@@ -316,6 +387,10 @@ function checkCollisions() {
   for (let i = alienBullets.length - 1; i >= 0; i--) {
     let b = alienBullets[i];
     if (!b) continue;
+    if (damageBarrierAt(b.x, b.y, true)) {
+      alienBullets.splice(i, 1);
+      continue;
+    }
     if (b.x >= player.x && b.x <= player.x + player.width &&
         b.y >= player.y && b.y <= player.y + player.height) {
       alienBullets.splice(i, 1);
@@ -445,4 +520,5 @@ canvas.addEventListener('click', () => {
 });
 
 updateUI();
+initBarriers();
 requestAnimationFrame(gameLoop);
