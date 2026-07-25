@@ -2,6 +2,7 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
 const highScoreEl = document.getElementById('high-score');
+const soundEl = document.getElementById('sound');
 const livesEl = document.getElementById('lives');
 const startScreen = document.getElementById('start-screen');
 const gameOverScreen = document.getElementById('game-over');
@@ -92,6 +93,73 @@ let alienSpeed = 0.5;
 let alienMoveInterval = 30;
 let alienShootChance = 0.01;
 let mysteryShip = null;
+let soundEnabled = true;
+let audioCtx = null;
+let alienStepTone = 0;
+let lastUfoHumFrame = -999;
+
+const INVADER_MOVE_NOTES = [220, 196, 174, 164];
+
+function getAudioContext() {
+  if (!audioCtx) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    audioCtx = new AudioCtx();
+  }
+  return audioCtx;
+}
+
+function ensureAudioRunning() {
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    ctx.resume();
+  }
+}
+
+function playTone(freq, duration, type, volume, endFreq) {
+  if (!soundEnabled) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, now);
+  if (endFreq) {
+    osc.frequency.exponentialRampToValueAtTime(endFreq, now + duration);
+  }
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + duration + 0.02);
+}
+
+function playShotSound() {
+  playTone(1400, 0.09, 'sawtooth', 0.07, 380);
+}
+
+function playUfoMoveSound() {
+  playTone(250, 0.1, 'square', 0.04, 180);
+}
+
+function playUfoHitSound() {
+  playTone(620, 0.06, 'square', 0.07, 460);
+  playTone(220, 0.14, 'sawtooth', 0.05, 110);
+}
+
+function playInvaderHitSound() {
+  playTone(520, 0.07, 'square', 0.06, 260);
+}
+
+function playInvaderMoveSound() {
+  const freq = INVADER_MOVE_NOTES[alienStepTone];
+  playTone(freq, 0.07, 'square', 0.05);
+  alienStepTone = (alienStepTone + 1) % INVADER_MOVE_NOTES.length;
+}
 
 function initAliens() {
   aliens = [];
@@ -125,6 +193,8 @@ function resetGame() {
   alienSpeed = 0.5;
   alienMoveInterval = 60;
   alienShootChance = 0.005;
+  alienStepTone = 0;
+  lastUfoHumFrame = -999;
   initAliens();
   updateUI();
 }
@@ -223,6 +293,7 @@ function updateAliens() {
       alien.x += alienDir * 10;
     }
   }
+  playInvaderMoveSound();
 
   if (edge) {
     alienDir *= -1;
@@ -233,12 +304,17 @@ function updateAliens() {
   // 謎の宇宙船出現
   if (!mysteryShip && Math.random() < 0.002) {
     mysteryShip = { x: -60, y: 30, width: 48, height: 18, dir: 1 };
+    lastUfoHumFrame = frameCount - 30;
   }
 }
 
 function updateMysteryShip() {
   if (!mysteryShip) return;
   mysteryShip.x += mysteryShip.dir * 2;
+  if (frameCount - lastUfoHumFrame >= 24) {
+    playUfoMoveSound();
+    lastUfoHumFrame = frameCount;
+  }
   if (mysteryShip.x > SCREEN_WIDTH + 60) {
     mysteryShip = null;
   }
@@ -294,6 +370,7 @@ function checkCollisions() {
         alien.alive = false;
         hit = true;
         createExplosion(alien.x + alien.width/2, alien.y + alien.height/2, alien.color);
+        playInvaderHitSound();
         score += alien.type === 'invaderA' ? 30 : alien.type === 'invaderB' ? 20 : 10;
         updateUI();
         break;
@@ -305,6 +382,7 @@ function checkCollisions() {
         b.y >= mysteryShip.y && b.y <= mysteryShip.y + mysteryShip.height) {
       hit = true;
       createExplosion(mysteryShip.x + 24, mysteryShip.y + 6, '#f0f');
+      playUfoHitSound();
       score += 100;
       mysteryShip = null;
       updateUI();
@@ -385,10 +463,12 @@ function gameOver() {
 function updateUI() {
   scoreEl.textContent = `SCORE: ${score}`;
   highScoreEl.textContent = `HI-SCORE: ${highScore}`;
+  if (soundEl) soundEl.textContent = `SOUND: ${soundEnabled ? 'ON' : 'OFF'}`;
   livesEl.textContent = `LIVES: ${lives}`;
 }
 
 function startGame() {
+  ensureAudioRunning();
   startScreen.classList.add('hidden');
   gameOverScreen.classList.add('hidden');
   resetGame();
@@ -414,6 +494,7 @@ function gameLoop() {
     // 発射
     if (keys[' '] && frameCount - lastShot > 18) {
       bullets.push({ x: player.x + player.width / 2, y: player.y });
+      playShotSound();
       lastShot = frameCount;
     }
   }
@@ -429,7 +510,13 @@ function gameLoop() {
 
 window.addEventListener('keydown', e => {
   keys[e.key] = true;
+  if ((e.key === 's' || e.key === 'S') && !e.repeat) {
+    soundEnabled = !soundEnabled;
+    ensureAudioRunning();
+    updateUI();
+  }
   if ((gameState === 'start' || gameState === 'gameover') && e.key === ' ') {
+    ensureAudioRunning();
     startGame();
   }
 });
@@ -439,6 +526,7 @@ window.addEventListener('keyup', e => {
 });
 
 canvas.addEventListener('click', () => {
+  ensureAudioRunning();
   if (gameState === 'start' || gameState === 'gameover') {
     startGame();
   }
