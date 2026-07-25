@@ -123,8 +123,8 @@ function resetGame() {
   mysteryShip = null;
   alienDir = 1;
   alienSpeed = 0.5;
-  alienMoveInterval = 30;
-  alienShootChance = 0.01;
+  alienMoveInterval = 60;
+  alienShootChance = 0.005;
   initAliens();
   updateUI();
 }
